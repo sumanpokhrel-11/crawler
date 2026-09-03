@@ -1,0 +1,29 @@
+# Listing pages to crawl for products + prices, one URL per line.
+# Blank lines and #-comments ignored. Re-run build_listing_queue.py after editing.
+https://www.danmurphys.com.au/list/wine
+https://www.danmurphys.com.au/beer/all
+https://www.danmurphys.com.au/spirits/all
+https://www.danmurphys.com.au/spirits/premix-drinks
+https://www.danmurphys.com.au/list/zero-alcohol-drinks
+https://www.danmurphys.com.au/list/new
+https://www.danmurphys.com.au/discover/fathers-day
+https://www.danmurphys.com.au/list/member-offers
+https://www.danmurphys.com.au/list/clearance
+https://www.danmurphys.com.au/list/buy-one-get-one-free
+https://www.danmurphys.com.au/list/wine-offers-best-deals
+https://www.danmurphys.com.au/list/spirits-offers-best-deals
+https://www.danmurphys.com.au/list/beer-offers-best-deals
+https://www.danmurphys.com.au/list/cider-offers-best-deals
+https://www.danmurphys.com.au/list/premix-offers-best-deals
+https://www.danmurphys.com.au/list/top-shelf
+
+# Liquorland (Coles). Paginates by ?page=N at 60 products/page, so these are
+# expanded into one target per page. Over-estimating pages is harmless: a page
+# past the end simply returns nothing.
+https://www.liquorland.com.au/spirits | pages=30
+https://www.liquorland.com.au/wine | pages=40
+https://www.liquorland.com.au/beer-and-cider | pages=25
+https://www.liquorland.com.au/premix | pages=15
+https://www.liquorland.com.au/wine/red-wine | pages=25
+https://www.liquorland.com.au/wine/white-wine | pages=20
+https://www.liquorland.com.au/beer-and-cider/beer | pages=20

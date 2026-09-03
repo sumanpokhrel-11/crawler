@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "Alcohol Data Collector",
+  "version": "1.0.0",
+  "description": "Collects product, price and review data from AU alcohol sites using the browser's own session, and posts it to a local collector.",
+  "permissions": [
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://*.danmurphys.com.au/*",
+    "https://*.bws.com.au/*",
+    "https://*.liquorland.com.au/*",
+    "https://*.thirstycamel.com.au/*",
+    "https://*.nicks.com.au/*",
+    "https://*.mybottleshop.com.au/*",
+    "https://*.liquorloot.com.au/*",
+    "https://untappd.com/*",
+    "https://*.craftypint.com/*",
+    "https://au.trustpilot.com/*",
+    "https://*.productreview.com.au/*",
+    "http://127.0.0.1:8765/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.danmurphys.com.au/*",
+        "https://*.bws.com.au/*",
+        "https://*.liquorland.com.au/*",
+        "https://*.thirstycamel.com.au/*",
+        "https://*.nicks.com.au/*",
+        "https://*.mybottleshop.com.au/*",
+        "https://*.liquorloot.com.au/*",
+        "https://untappd.com/*",
+        "https://*.craftypint.com/*",
+        "https://au.trustpilot.com/*",
+        "https://*.productreview.com.au/*"
+      ],
+      "js": [
+        "adapters/base.js",
+        "adapters/retailers.js",
+        "adapters/reviews.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Alcohol Data Collector"
+  }
+}

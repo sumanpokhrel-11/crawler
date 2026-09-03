@@ -1,0 +1,10 @@
+# Scraped data: ~156MB and growing, regenerable from a crawl. Never commit.
+alcohol-scrape/data/
+alcohol-scrape/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

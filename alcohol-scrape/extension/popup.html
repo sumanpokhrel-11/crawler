@@ -1,0 +1,31 @@
+<meta charset="utf-8">
+<style>
+  body { font: 13px -apple-system, system-ui, sans-serif; width: 260px; padding: 12px; }
+  h1 { font-size: 13px; margin: 0 0 10px; }
+  button { width: 100%; padding: 7px; margin-bottom: 6px; cursor: pointer; }
+  .stat { display: flex; justify-content: space-between; padding: 2px 0; color: #444; }
+  #err { color: #b00; margin-top: 8px; font-size: 11px; }
+  label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  input { width: 60px; }
+</style>
+<h1>Alcohol Data Collector</h1>
+<label>Pages to crawl <input id="pages" type="number" value="20" min="1" max="500"></label>
+<button id="scrape">Scrape this page</button>
+<button id="crawl">Start paginated crawl</button>
+<button id="stop">Stop crawl</button>
+<div class="stat"><span>Products</span><b id="p">0</b></div>
+<div class="stat"><span>Reviews</span><b id="r">0</b></div>
+<div class="stat"><span>Pages</span><b id="g">0</b></div>
+<hr style="margin:10px 0;border:none;border-top:1px solid #ddd">
+<button id="listing">Start listing crawl (seeded)</button>
+<button id="listingstop">Stop listing crawl</button>
+<div class="stat"><span>Listing</span><b id="ls">—</b></div>
+<hr style="margin:10px 0;border:none;border-top:1px solid #ddd">
+<label>Review pages / product <input id="revpages" type="number" value="2000" min="1" max="5000"></label>
+<label>Worker tabs <input id="tabs" type="number" value="1" min="1" max="4"></label>
+<button id="sweep">Start review sweep</button>
+<button id="sweepstop">Stop sweep</button>
+<div class="stat"><span>Sweep</span><b id="sw">—</b></div>
+<button id="reset" style="margin-top:8px">Reset counters</button>
+<div id="err"></div>
+<script src="popup.js"></script>

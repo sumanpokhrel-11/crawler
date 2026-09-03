@@ -1,0 +1,403 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Alcohol scrape record contract v1",
+  "description": "Three record types, emitted as JSON Lines. product = canonical item, offer = a price at a retailer at a point in time, review = review text + normalised score.",
+  "$defs": {
+    "product": {
+      "type": "object",
+      "required": [
+        "record_type",
+        "product_key",
+        "source",
+        "source_url",
+        "name",
+        "scraped_at"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "product"
+        },
+        "product_key": {
+          "type": "string",
+          "description": "Deterministic hash of brand+name+volume_ml+vintage. Stable across runs; the join key for offers and reviews."
+        },
+        "source": {
+          "type": "string",
+          "description": "Slug of the site the record came from, e.g. kent_street_cellars"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "source_product_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "brand": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "wine",
+            "beer",
+            "spirits",
+            "cider",
+            "rtd",
+            "sake",
+            "other",
+            null
+          ]
+        },
+        "subcategory": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "varietal / style, e.g. shiraz, hazy ipa, single malt"
+        },
+        "volume_ml": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "pack_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "bottles/cans per unit; 1 for singles"
+        },
+        "abv": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "vintage": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "country": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "region": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gtin": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Barcode when exposed. Highest-confidence cross-retailer match key."
+        },
+        "scraped_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "offer": {
+      "type": "object",
+      "required": [
+        "record_type",
+        "product_key",
+        "retailer",
+        "url",
+        "price_aud",
+        "scraped_at"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "offer"
+        },
+        "product_key": {
+          "type": "string"
+        },
+        "retailer": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "price_aud": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "was_price_aud": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Pre-discount price when shown"
+        },
+        "unit_price_aud": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Per-bottle price when the offer is a case/pack"
+        },
+        "in_stock": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "pack_size": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "postcode": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Dan Murphy's/BWS price varies by store; null means national price"
+        },
+        "scraped_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "member_price_aud": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Loyalty-member price where the retailer shows one (Dan Murphy's). price_aud stays the general-shopper price."
+        },
+        "promo": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Promotional text, e.g. 'Buy One Get One Free'"
+        },
+        "aggregate_rating_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Retailer's own star rating 0..1. Listing pages give integer stars only; treat as coarse."
+        },
+        "aggregate_review_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Number of reviews the retailer reports; use to find products worth scraping review text from."
+        }
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "record_type",
+        "source",
+        "source_url",
+        "text",
+        "scraped_at"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "review"
+        },
+        "review_key": {
+          "type": "string"
+        },
+        "product_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Null until entity resolution links it to a canonical product"
+        },
+        "product_name_raw": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name as printed on the review site, kept for matching"
+        },
+        "subject_type": {
+          "type": "string",
+          "enum": [
+            "product",
+            "retailer"
+          ],
+          "description": "product = review of the drink; retailer = review of the shop's service"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "description": "Full review body. The client explicitly requires review text, not just scores."
+        },
+        "rating_raw": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rating_scale": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Max of the source's scale: 5 for Untappd/Trustpilot, 100 for Halliday"
+        },
+        "rating_norm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "rating_raw / rating_scale"
+        },
+        "review_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "scraped_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sort_order": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Sort order the review list was in when captured. 'Newest' is a chronological sample; 'Highest rating' is the site default and is positively biased."
+        }
+      }
+    },
+    "review_summary": {
+      "type": "object",
+      "description": "The retailer's own aggregate rating for a product. Authoritative - an average over one or two sampled pages is not representative.",
+      "required": [
+        "record_type",
+        "source_url"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "review_summary"
+        },
+        "product_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "product_name_raw": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "average_rating": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "rating_scale": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "average_rating_norm": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pct_recommend": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "distribution": {
+          "type": "object",
+          "description": "star rating to count, e.g. 5:5656, 1:25"
+        },
+        "total_reviews": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scraped_at": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/product"
+    },
+    {
+      "$ref": "#/$defs/offer"
+    },
+    {
+      "$ref": "#/$defs/review"
+    },
+    {
+      "$ref": "#/$defs/review_summary"
+    }
+  ]
+}
