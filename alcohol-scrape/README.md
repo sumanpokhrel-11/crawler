@@ -11,14 +11,18 @@ MyBottleShop), plus review sources.
 
 | | products | offers | reviews |
 |---|---|---|---|
-| Liquorland | 8,884 | 8,884 | in progress (~3/product available) |
+| Liquorland | 8,884 | 8,884 | **5,200** (~3/product ceiling) |
 | Kent Street Cellars | 7,818 | 7,818 | none (no adapter) |
 | Dan Murphy's | 4,659 | 4,659 | **10,872** |
-| **catalogue total** | **18,394** | **21,361** | **10,983** |
+| **catalogue total** | **18,438** | **18,261** | **16,029** |
 
-15,231 products carry a price. **209 products match across more than one retailer** —
-that set is what the comparison is actually built on. Median price gap between
-retailers on those is 11.1%.
+15,231 products carry a price and 3,882 carry the retailer's published rating.
+**209 products match across more than one retailer** — that set is what the
+comparison is actually built on. Median price gap between retailers on those is 11.1%.
+
+Both review samples test unbiased against the retailers' own published star
+distributions: Dan Murphy's median +0.000 (n=471), Liquorland median +0.000
+(n=2,071). That comparison is the standing check on whether a sample is honest.
 
 ## Why two lanes
 
@@ -161,8 +165,9 @@ Things that are not obvious and cost real time to discover.
 
 ## Entity resolution
 
-`resolve.py` matches on GTIN, then exact slug, then fuzzy slug (0.86 threshold) over
-an inverted token index. Anything below threshold goes to `data/out/review_queue.jsonl`
+`resolve.py` de-duplicates offers (one row per product/retailer/price/day — the
+collector's dedupe is in-memory and resets on restart), then matches on GTIN, exact
+slug, and fuzzy slug (0.86 threshold) over an inverted token index. Anything below threshold goes to `data/out/review_queue.jsonl`
 for a human rather than being guessed at. Current link rate: **99%**.
 
 Review slugs must be built with volume and vintage parsed from the heading —
@@ -175,7 +180,8 @@ otherwise identical products score ~0.81 against the 0.86 cutoff.
   not yet identified).
 - **Dan Murphy's coverage is capped by clicks**: `/list/wine` advertises 6,771
   products and 60 clicks captured 1,464. Raise `--clicks` to close the gap.
-- Liquorland review sweep is partially run (~4,900 targets remaining).
+- Liquorland reviews are capped at ~3/product by the site; 79 of 4,934 targets
+  failed repeatedly and were skipped.
 - No adapters yet for BeerIsOk, Winepilot, Untappd, The Crafty Pint.
 - Paid review sites (Halliday, The Real Review, The Wine Front) are subscription
   content — client sign-off needed before building those.
