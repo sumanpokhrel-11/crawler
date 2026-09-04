@@ -47,12 +47,36 @@ def get(url: str, timeout: int = 40):
 
 
 def pick_store() -> tuple[str, str]:
-    """Any store will do for comparison purposes; record which one."""
-    items = get(f"{CORE}/stores?limit=50").get("items", [])
-    for s in items:
-        if s.get("id"):
-            return s["id"], s.get("slug") or s.get("name") or s["id"]
-    raise SystemExit("no stores returned")
+    """Pick the store with the widest range.
+
+    Thirsty Camel is a franchise: the catalogue and the prices are per store, and
+    a small country outlet lists a fraction of what a larger one does. Sampling
+    keeps the run to a single store so prices stay internally consistent.
+    (`/stores?limit=60` returns HTTP 400 — 20 is accepted.)
+    """
+    stores = []
+    for page in (1, 2, 3):
+        try:
+            stores += get(f"{CORE}/stores?limit=20&page={page}").get("items", [])
+        except (urllib.error.URLError, OSError):
+            break
+    best = (0, None, None)
+    for st in stores:
+        sid = st.get("id")
+        if not sid:
+            continue
+        try:
+            meta = get(f"{CORE}/products/search?limit=1&page=1&totals=true"
+                       f"&store={sid}").get("results", {}).get("meta", {})
+        except (urllib.error.URLError, OSError):
+            continue
+        n = meta.get("totalItems", 0)
+        if n > best[0]:
+            best = (n, sid, st.get("slug") or sid)
+    if not best[1]:
+        raise SystemExit("no usable store found")
+    print(f"widest range: {best[2]} ({best[0]} items)")
+    return best[1], best[2]
 
 
 def price_of(item: dict) -> tuple[float | None, bool]:
@@ -75,11 +99,12 @@ def to_records(item: dict, store_slug: str) -> list[dict]:
     name_raw = item.get("liquorfileName") or item.get("name") or ""
     if not name_raw:
         return []
-    pack = item.get("packQty") or item.get("packQtyActual") or 1
-    try:
-        pack = int(pack) or 1
-    except (TypeError, ValueError):
-        pack = 1
+    # packQty is the CARTON quantity (units per shipping case), not what the
+    # customer buys: "19 Crimes Hard Chardonnay 750ml" comes back with packQty 6
+    # while $16.00 is the price of one bottle. Using it made unit prices absurd
+    # ($1.25 for St Hallett Shiraz) and blocked like-for-like comparison.
+    # The sellable pack, when there is one, is stated in the name ("... 6pk").
+    pack = N.parse_pack_size(name_raw) or 1
     unit = item.get("unitSize")
     volume_ml = None
     try:
@@ -108,6 +133,7 @@ def to_records(item: dict, store_slug: str) -> list[dict]:
         "abv": N.parse_abv(name_raw), "vintage": vintage,
         "country": None, "region": None, "image_url": None,
         "gtin": gtin, "scraped_at": ts,
+        "carton_qty": item.get("packQty"),
     }]
     price, special = price_of(item)
     if price is not None:
@@ -146,10 +172,15 @@ def main() -> None:
                 print(f"  ! page {page} failed: {e}")
                 break
             res = j.get("results", {})
-            pages = res.get("meta", {}).get("totalPages", 1)
+            meta = res.get("meta", {})
+            # totalPages has been seen to understate the catalogue, so keep going
+            # while pages still return items.
+            reported = meta.get("totalPages", 1)
+            items = res.get("items", [])
+            pages = max(reported, page + 1) if items else page
             if args.limit_pages:
                 pages = min(pages, args.limit_pages)
-            for item in res.get("items", []):
+            for item in items:
                 for r in to_records(item, store_slug):
                     fh.write(json.dumps(r, ensure_ascii=False) + "\n")
                     written["products" if r["record_type"] == "product" else "offers"] += 1

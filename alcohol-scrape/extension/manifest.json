@@ -22,7 +22,8 @@
     "https://*.craftypint.com/*",
     "https://au.trustpilot.com/*",
     "https://*.productreview.com.au/*",
-    "http://127.0.0.1:8765/*"
+    "http://127.0.0.1:8765/*",
+    "https://craftypint.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -41,7 +42,8 @@
         "https://untappd.com/*",
         "https://*.craftypint.com/*",
         "https://au.trustpilot.com/*",
-        "https://*.productreview.com.au/*"
+        "https://*.productreview.com.au/*",
+        "https://craftypint.com/*"
       ],
       "js": [
         "adapters/base.js",

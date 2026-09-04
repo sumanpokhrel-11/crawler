@@ -189,6 +189,71 @@ The DOM notes below still apply to the listing crawl:
   dedupes so re-running is always safe.
 - Use 2–3 worker tabs. Each multiplies request rate against one site from one IP.
 
+## Review sources
+
+| Source | Lane | Reviews | Notes |
+|---|---|---|---|
+| Dan Murphy's | extension | 10,835 | must sort by Newest — default is biased |
+| Liquorland | extension | 5,183 | JSON-LD only, ~3 per product ceiling |
+| **Winepilot** | **HTTP (WP REST API)** | **16,003 collected** | 100-point scores, full tasting notes |
+| BeerIsOk | — | 9 total | not worth crawling |
+| **The Crafty Pint** | **extension (same-origin fetch)** | **3,702** | craft beer; ~2,270 chars each |
+| Untappd | browser | — | accessible, but user-generated content on a social platform — client decision |
+| Halliday, Real Review, Wine Front | — | — | paid, needs client sign-off |
+
+Winepilot is a WordPress site, so its whole archive is one paginated endpoint:
+
+```
+GET winepilot.com/wp-json/wp/v2/posts?per_page=100&page=N
+```
+`points` carries the 100-point score (same scale as Halliday). 16,003 reviews in
+~160 requests, no browser. 15,666 of them are scored.
+
+**Review sites cover far more than retailers stock.** Winepilot linked 984 of
+16,003; Crafty Pint 18 of 3,702 — its beers are independent craft releases
+("Molly Rose Bohemian Hipsody") that mainstream bottle shops do not carry. The
+reviews are kept in `review_queue.jsonl` and link automatically as retailer
+coverage grows; they are not discarded.
+
+Crafty Pint is Cloudflare-blocked server-side, but same-origin `fetch` from a
+craftypint.com tab returns fully server-rendered HTML. The content script fetches
+and parses (a service worker has no DOMParser) and the background worker relays to
+the collector, because the page itself cannot reach localhost.
+
+Only a minority link to catalogue products — Winepilot reviews far more wine than
+any one retailer stocks — and unlinked reviews go to `review_queue.jsonl` rather
+than being force-matched.
+
+**Vintage is part of wine identity.** A one-digit vintage difference barely moves a
+similarity score, so a 2022 tasting note happily attached to the 2000 of the same
+wine. `resolve.py` rejects a match when both sides state a vintage and disagree;
+that removed 883 false links.
+
+## Pack size and price comparison
+
+Pack size is the difference between a real comparison and a nonsense one, and
+each retailer expresses it differently:
+
+| Retailer | Where pack size comes from | Trap |
+|---|---|---|
+| Dan Murphy's | `.product-card-unit` = "pack (6)" / "case (24)" | its API reports `Unit: "Each"` even for a case |
+| Thirsty Camel | the product **name** ("... 330ml 6pk") | `packQty` is the CARTON quantity, not the sellable pack — using it priced St Hallett Shiraz at $1.25/bottle |
+| Liquorland | `.product-card-unit` | often absent, defaults to 1 |
+| Nicks / Kent St | parsed from the name | mostly singles |
+
+`resolve.py` compares in this order:
+
+1. **`same_pack`** — same pack size, different retailers, cheapest price per
+   retailer. The default and the most defensible.
+2. **`unit_price`** — pack sizes differ but all are known, so per-unit is sound
+   (one can at $8.00 vs a 4-pack at $22.99 is $8.00 vs $5.75 each).
+3. Anything with a spread above 150% is flagged `compare_suspect` and must not be
+   shown as a saving — real competition does not produce a 2.5x gap on an
+   identical product, so it almost always means an unresolved pack mismatch.
+
+Each entry carries `compare_basis`, `compare_pack_size`, `compare_prices`,
+`compare_spread_pct` and `compare_cheapest`.
+
 ## Entity resolution
 
 `resolve.py` de-duplicates offers (one row per product/retailer/price/day — the

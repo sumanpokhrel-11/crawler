@@ -57,6 +57,11 @@ $("stop").onclick = async () => {
   await chrome.storage.local.set({ adc_crawl: { active: false, pages_left: 0 } });
 };
 
+$("crafty").onclick = async () => {
+  const t = await activeTab();
+  chrome.tabs.sendMessage(t.id, { type: "ADC_CRAFTY_START", opts: {} }, () => {});
+};
+
 $("enrich").onclick = () => {
   chrome.runtime.sendMessage({ type: "ADC_ENRICH_START" });
   setTimeout(refresh, 1500);

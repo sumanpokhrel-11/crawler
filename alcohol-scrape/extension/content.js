@@ -232,6 +232,78 @@
     chrome.runtime.sendMessage({ type: "ADC_SWEEP_PAGE_DONE", reviews: total });
   }
 
+  // ---------------------------------------------------------- Crafty Pint
+  // Cloudflare blocks server-side requests, but same-origin fetches from a
+  // craftypint.com tab return fully server-rendered HTML. The content script
+  // fetches and parses; the background worker relays to the collector (the page
+  // itself cannot reach localhost).
+  async function craftyPintCrawl(opts) {
+    const maxListPages = opts.max_list_pages || 160;
+    const seen = new Set();
+    const slugs = [];
+
+    for (let page = 1; page <= maxListPages; page++) {
+      let html;
+      try {
+        html = await (await fetch(`/beers/page:${page}`)).text();
+      } catch (e) {
+        alog("crafty: list page " + page + " failed: " + e);
+        break;
+      }
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const found = [...doc.querySelectorAll('a[href*="/beer/"]')]
+        .map((a) => a.getAttribute("href"))
+        .filter((h) => h && /^\/beer\//.test(h));
+      let added = 0;
+      for (const h of found) {
+        if (!seen.has(h)) { seen.add(h); slugs.push(h); added++; }
+      }
+      if (!added) { alog("crafty: page " + page + " empty, stopping"); break; }
+      if (page % 20 === 0) alog(`crafty: ${page} list pages, ${slugs.length} beers`);
+      await new Promise((r) => setTimeout(r, 250 + Math.random() * 250));
+    }
+    alog(`crafty: ${slugs.length} beer URLs discovered`);
+
+    let batch = [];
+    let done = 0;
+    for (const slug of slugs) {
+      let html;
+      try {
+        html = await (await fetch(slug)).text();
+      } catch (e) { continue; }
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const name = (doc.querySelector("h1") || {}).textContent;
+      const prose = [...doc.querySelectorAll("p")]
+        .map((p) => (p.textContent || "").replace(/\s+/g, " ").trim())
+        .filter((t) => t.length > 80)
+        .join("\n\n");
+      if (name && prose.length > 150) {
+        batch.push({
+          source: "crafty_pint", subject_type: "product",
+          source_url: location.origin + slug,
+          product_name_raw: name.replace(/\s+/g, " ").trim(),
+          author: null, title: name.replace(/\s+/g, " ").trim(),
+          text: prose, rating_raw: null, rating_scale: null,
+          review_date: null,
+        });
+      }
+      done++;
+      if (batch.length >= 25) {
+        chrome.runtime.sendMessage({ type: "ADC_BATCH", payload: {
+          url: location.href, host: location.hostname, products: [], reviews: batch }});
+        alog(`crafty: sent ${batch.length} reviews (${done}/${slugs.length})`);
+        batch = [];
+      }
+      await new Promise((r) => setTimeout(r, 300 + Math.random() * 300));
+    }
+    if (batch.length) {
+      chrome.runtime.sendMessage({ type: "ADC_BATCH", payload: {
+        url: location.href, host: location.hostname, products: [], reviews: batch }});
+    }
+    alog(`crafty: finished, ${done} beers processed`);
+    chrome.storage.local.set({ adc_crafty: { active: false, finished: true } });
+  }
+
   function send(payload) {
     if (!payload.products.length && !payload.reviews.length) return;
     chrome.runtime.sendMessage({ type: "ADC_BATCH", payload });
@@ -363,6 +435,11 @@
   }
 
   chrome.runtime.onMessage.addListener((msg, _s, reply) => {
+    if (msg.type === "ADC_CRAFTY_START") {
+      craftyPintCrawl(msg.opts || {}).catch((e) => alog("crafty failed: " + e));
+      reply({ ok: true });
+      return true;
+    }
     if (msg.type === "ADC_SCRAPE_NOW") { runOnce(msg.opts || {}).then(() => reply({ ok: true })); return true; }
   });
 

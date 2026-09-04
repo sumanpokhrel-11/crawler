@@ -137,9 +137,37 @@ def _comparable(offs: list[dict]) -> dict:
                     # identical product; treat those as an unresolved pack-size
                     # mismatch rather than a saving.
                     "compare_suspect": spread > 150}
-    return best or {"compare_pack_size": None, "compare_prices": {},
-                    "compare_spread_pct": None, "compare_cheapest": None,
-                    "compare_suspect": False}
+    if best:
+        best["compare_basis"] = "same_pack"
+        return best
+
+    # No shared pack size, but every pack size is known — so a per-unit
+    # comparison is still sound (a single can at $8.00 vs a 4-pack at $22.99 is
+    # $8.00 vs $5.75 each). Only fall back when nothing is guessed.
+    per_unit: dict[str, float] = {}
+    packs_seen: set[int] = set()
+    for o in offs:
+        p, price, ret = o.get("pack_size"), o.get("price_aud"), o.get("retailer")
+        if not p or price is None or not ret:
+            continue
+        packs_seen.add(p)
+        unit = round(price / p, 2)
+        if ret not in per_unit or unit < per_unit[ret]:
+            per_unit[ret] = unit
+    if len(per_unit) > 1 and len(packs_seen) > 1:
+        lo, hi = min(per_unit.values()), max(per_unit.values())
+        if lo:
+            spread = round((hi - lo) / lo * 100, 1)
+            return {"compare_pack_size": None,
+                    "compare_prices": per_unit,
+                    "compare_spread_pct": spread,
+                    "compare_cheapest": min(per_unit, key=per_unit.get),
+                    "compare_suspect": spread > 150,
+                    "compare_basis": "unit_price"}
+
+    return {"compare_pack_size": None, "compare_prices": {},
+            "compare_spread_pct": None, "compare_cheapest": None,
+            "compare_suspect": False, "compare_basis": None}
 
 
 def main() -> None:
@@ -220,6 +248,15 @@ def main() -> None:
             key, score = direct, 1.0
         else:
             key, score = best_match(name_raw, slugs, tokens, postings)
+        # A one-digit vintage difference barely moves a similarity score, so a
+        # 2022 tasting note can attach to the 2000 of the same wine. For wine the
+        # vintage IS the product: reject when both sides state one and disagree.
+        if key:
+            rv_vintage = N.parse_vintage(name_raw)
+            pr_vintage = canonical[key].get("vintage") if key in canonical else None
+            if rv_vintage and pr_vintage and rv_vintage != pr_vintage:
+                key, score = None, 0.0
+
         if key and score >= FUZZY_THRESHOLD:
             rv["product_key"] = key
             rv["match_score"] = score
