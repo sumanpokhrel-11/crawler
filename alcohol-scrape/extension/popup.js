@@ -8,6 +8,15 @@ async function refresh() {
   $("p").textContent = s.products; $("r").textContent = s.reviews; $("g").textContent = s.pages;
   $("err").textContent = last_error ? String(last_error).slice(0, 70) : "";
 
+  const { enrich_progress: ep, adc_enrich } =
+    await chrome.storage.local.get(["enrich_progress", "adc_enrich"]);
+  if (ep) {
+    const running = adc_enrich && adc_enrich.active;
+    $("en").textContent = `${ep.done}/${ep.total}` + (running ? "" : " (idle)");
+  } else {
+    $("en").textContent = "—";
+  }
+
   const lp = listing_progress;
   if (adc_listing && adc_listing.active && lp) {
     $("ls").textContent = `${lp.done}/${lp.total}`;
@@ -47,6 +56,12 @@ $("crawl").onclick = async () => {
 $("stop").onclick = async () => {
   await chrome.storage.local.set({ adc_crawl: { active: false, pages_left: 0 } });
 };
+
+$("enrich").onclick = () => {
+  chrome.runtime.sendMessage({ type: "ADC_ENRICH_START" });
+  setTimeout(refresh, 1500);
+};
+$("enrichstop").onclick = () => chrome.runtime.sendMessage({ type: "ADC_ENRICH_STOP" });
 
 $("listing").onclick = async () => {
   const t = await activeTab();

@@ -111,12 +111,38 @@ data instead of re-crawling. `data/` is gitignored (~156MB).
 
 Things that are not obvious and cost real time to discover.
 
+**Dan Murphy's has a JSON API — prefer it over scraping the DOM.**
+
+```
+POST api.danmurphys.com.au/apis/ui/Browse
+     {"department":"spirits","subDepartment":"gin","filters":[],
+      "pageNumber":1,"pageSize":100,"sortType":"Relevance","PageUrl":"/spirits/gin"}
+GET  api.danmurphys.com.au/apis/ui/Products/<comma-separated stockcodes>
+```
+
+Both run from the extension background worker (host permissions cover the
+subdomain) — no page, no rendering, no tab throttling. `Products/` returns price,
+member price, `PackageSize`, `OverallRating` and `NumberOfReviews` for ~40
+stockcodes per call in about 2 seconds, and every product URL carries its
+stockcode (`/product/DM_73796/...`). That is what `build_enrich_queue.py` plus the
+popup's **Fill prices via API** use to fill prices the DOM crawl missed.
+
+`Browse` needs the site's internal taxonomy: `department`/`subDepartment` must be
+real values (`spirits`/`gin` works, `beer`/`all` 404s), so it cannot be derived
+from the URL path alone. Capture a real request body from the page to learn them.
+
+The DOM notes below still apply to the listing crawl:
+
 **Dan Murphy's** — Angular, no `data-testid`, no JSON-LD products.
 - **Two tile layouts on the same page**: `.title`/`.subtitle` + `.card-price`, and
   `.product__title` + `.product__price-value`. Handling only one loses ~half the prices.
 - **Dual pricing**: member and non-member. `price_aud` is the non-member (general
   shopper) price; `member_price_aud` is the loyalty price. Comparing on member
   pricing alone misrepresents what most people pay.
+- **Listing pages only render prices near the viewport.** After a 200-click deep
+  crawl, 78% of tiles had a name and image but no price. The crawler now harvests
+  after every click (while the new batch is on screen) and keeps whichever version
+  of a tile carries a price — but the API above is the reliable fix.
 - **Infinite loader**, not pagination: a "Show 24 more" button appends tiles. The
   grid renders well after `document_idle`, so the crawler waits for it before
   looking for the button — searching too early finds nothing and harvests one

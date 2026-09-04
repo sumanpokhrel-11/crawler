@@ -129,8 +129,88 @@ async function listingNext(tabId) {
   }
 }
 
+// ------------------------------------------------------- API enrichment
+// Dan Murphy's listing pages only render prices for tiles near the viewport, so
+// a deep crawl leaves most products priceless. Their own product API returns
+// price, pack size and rating for a batch of stockcodes, and runs from the
+// extension (no page, no rendering, no throttling).
+const DM_API = "https://api.danmurphys.com.au/apis/ui/Products/";
+
+// Background-side diagnostics, to the same log the content scripts write to.
+function blog(msg) {
+  console.log("[ADC-bg] " + msg);
+  fetch(COLLECTOR.replace("/ingest", "/log"), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ where: "background", msg }),
+  }).catch(() => {});
+}
+
+async function enrichNext() {
+  const { adc_enrich } = await chrome.storage.local.get("adc_enrich");
+  blog("enrichNext active=" + !!(adc_enrich && adc_enrich.active));
+  if (!adc_enrich || !adc_enrich.active) return;
+
+  let data;
+  try {
+    const res = await fetch(COLLECTOR.replace("/ingest", "/next_stockcodes"));
+    data = await res.json();
+  } catch (e) {
+    await chrome.storage.local.set({ last_error: "collector unreachable: " + e });
+    return;
+  }
+  const codes = data.stockcodes || [];
+  blog("got " + codes.length + " stockcodes");
+  if (!codes.length) {
+    await chrome.storage.local.set({
+      adc_enrich: { ...adc_enrich, active: false, finished: true },
+      enrich_progress: data.progress,
+    });
+    return;
+  }
+
+  let enriched = [];
+  try {
+    const r = await fetch(DM_API + codes.join(","), { credentials: "include" });
+    const j = await r.json();
+    for (const p of Object.values(j)) {
+      if (!p || !p.Stockcode) continue;
+      const sp = p.Prices && (p.Prices.singleprice || p.Prices.SinglePrice);
+      const mp = p.Prices && (p.Prices.inanysixprice || p.Prices.memberprice);
+      enriched.push({
+        stockcode: String(p.Stockcode),
+        price: sp && sp.Value != null ? sp.Value : null,
+        member_price: mp && mp.Value != null ? mp.Value : null,
+        unit: p.Unit || null,
+        package_size: p.PackageSize || null,
+        rating: p.OverallRating || null,
+        reviews: p.NumberOfReviews || null,
+        in_stock: typeof p.IsPurchasable === "boolean" ? p.IsPurchasable : null,
+        url: p.UrlFriendlyName
+          ? "https://www.danmurphys.com.au/product/DM_" + p.Stockcode + "/" + p.UrlFriendlyName
+          : null,
+      });
+    }
+    blog("API returned " + enriched.length + " products");
+  } catch (e) {
+    blog("enrich fetch FAILED: " + e);
+  }
+
+  queue.push({ host: "api.danmurphys.com.au", url: "api://enrich",
+               products: [], reviews: [], enriched });
+  await chrome.storage.local.set({ enrich_progress: data.progress, last_activity: Date.now() });
+  await flush();
+  // Pace the API the way a browsing session would.
+  chrome.alarms.create("adc_next_enrich", { when: Date.now() + 1200 + Math.random() * 800 });
+}
+
 chrome.runtime.onMessage.addListener((msg, sender) => {
   const senderTab = sender && sender.tab ? sender.tab.id : null;
+  if (msg.type === "ADC_LOG") {
+    fetch(COLLECTOR.replace("/ingest", "/log"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ where: msg.where || ("tab" + senderTab), msg: msg.msg }),
+    }).catch(() => {});
+  }
   if (msg.type === "ADC_BATCH") { queue.push(msg.payload); flush(); }
   if (msg.type === "ADC_WHOAMI") {
     // A worker tab asks what it was sent here to do.
@@ -177,9 +257,12 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
       const tabIds = [msg.tab_id];
       for (let i = 1; i < want; i++) {
         try {
+          // Tile rather than stack: overlapping windows are "occluded" and Chrome
+          // throttles their timers to a standstill (a 6,771-product page stayed at
+          // 24 tiles for 8 minutes). Narrow side-by-side windows stay visible.
           const w = await chrome.windows.create({ url: "about:blank", focused: false,
-                                                  width: 900, height: 700,
-                                                  left: 60 * i, top: 60 * i });
+                                                  width: 480, height: 900,
+                                                  left: 490 * i, top: 0 });
           tabIds.push(w.tabs[0].id);
         } catch (e) { console.log("[ADC] could not open listing worker window", e); }
       }
@@ -196,6 +279,16 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     if (senderTab) pendingListingTabs.add(senderTab);
     chrome.storage.local.set({ last_activity: Date.now() });
     chrome.alarms.create("adc_next_listing", { when: Date.now() + 3000 + Math.random() * 2000 });
+  }
+  if (msg.type === "ADC_ENRICH_START") {
+    blog("ADC_ENRICH_START received");
+    chrome.storage.local.set({
+      adc_enrich: { active: true, finished: false }, last_activity: Date.now(),
+    }).then(() => enrichNext());
+  }
+  if (msg.type === "ADC_ENRICH_STOP") {
+    chrome.storage.local.get("adc_enrich").then(({ adc_enrich }) =>
+      chrome.storage.local.set({ adc_enrich: { ...(adc_enrich || {}), active: false } }));
   }
   if (msg.type === "ADC_LISTING_STOP") {
     chrome.storage.local.get("adc_listing").then(({ adc_listing }) =>
@@ -229,6 +322,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     else await sweepNext();
     return;
   }
+  if (alarm.name === "adc_next_enrich") { await enrichNext(); return; }
   if (alarm.name === "adc_next_listing") {
     await flush();
     const tabs = [...pendingListingTabs];

@@ -2,6 +2,15 @@
 // walk pagination on its own so an operator only has to start it once.
 (() => {
   const SETTLE_MS = 1200;
+
+  // Log to the page console and to the collector, so a run can be debugged from
+  // the log file instead of by reading a browser console.
+  function alog(msg) {
+    console.log("[ADC] " + msg);
+    try {
+      chrome.runtime.sendMessage({ type: "ADC_LOG", where: location.pathname.slice(0, 46), msg });
+    } catch (e) { /* extension context gone */ }
+  }
   let running = false;
 
   function harvest() {
@@ -133,22 +142,39 @@
   }
 
   async function runListingPage(job) {
+    alog("runListingPage start, budget=" + job.clicks + " hidden=" + document.hidden);
     const ready = await waitForProducts();
-    if (!ready) console.log("[ADC] listing: no product grid appeared");
+    if (!ready) alog("listing: no product grid appeared");
     // clicks === 0 means the site paginates by URL (Liquorland ?page=N) and each
     // page is its own queue target, so there is no button to expand. Using
     // `job.clicks || 60` here would wrongly hunt for a load-more button.
     const budget = Number.isFinite(job.clicks) ? job.clicks : 60;
-    const clicks = budget > 0 ? await expandInfiniteList(budget) : 0;
+
+    // Accumulate across the run, preferring the version of a tile that carries
+    // a price (see the note in expandInfiniteList).
+    const acc = new Map();
+    const collect = () => {
+      for (const p of globalThis.AD_RETAILERS.run()) {
+        const key = (p.source_url || "") + "|" + (p.name_raw || "");
+        const prev = acc.get(key);
+        if (!prev || (!prev.price_raw && p.price_raw)) acc.set(key, p);
+      }
+    };
+
+    collect();                                   // first screen, before any click
+    const clicks = budget > 0 ? await expandInfiniteList(budget, collect) : 0;
     await autoScroll();
     await new Promise((r) => setTimeout(r, SETTLE_MS));
-    const products = globalThis.AD_RETAILERS.run();
+    collect();
+    const products = [...acc.values()];
+    const priced = products.filter((p) => p.price_raw).length;
+    alog("harvested " + products.length + " products (" + priced + " priced) after " + clicks + " clicks");
     chrome.runtime.sendMessage({
       type: "ADC_BATCH",
       payload: { url: location.href, host: location.hostname, products, reviews: [],
                  listing_url: job.url, captured_at: new Date().toISOString() },
     });
-    console.log(`[ADC] listing ${location.pathname}: ${clicks} clicks, ${products.length} products`);
+    alog(`listing ${location.pathname}: ${clicks} clicks, ${products.length} products`);
     chrome.runtime.sendMessage({ type: "ADC_LISTING_PAGE_DONE", products: products.length });
   }
 
@@ -240,7 +266,14 @@
     return null;
   }
 
-  async function expandInfiniteList(maxClicks) {
+  async function expandInfiniteList(maxClicks, onBatch) {
+    // Chrome suspends timers in occluded/minimised windows, so the click loop
+    // simply stops making progress with no error. Say so loudly rather than
+    // silently returning one screen of products.
+    if (document.hidden) {
+      console.log("[ADC] WARNING: window is hidden - Chrome throttles timers here. " +
+                  "Keep the crawl window visible and in front, or use 1 worker tab.");
+    }
     let clicks = 0;
     while (clicks < maxClicks) {
       // The load-more button sits below the fold and is not rendered until the
@@ -272,6 +305,11 @@
         if (document.querySelectorAll(countSel).length > before) { grew = true; break; }
       }
       if (!grew) break;                       // exhausted, or the list stopped responding
+      // Harvest as we go. Angular only mounts the price component for tiles near
+      // the viewport, so tiles scrolled past end up name-and-image only: after
+      // 200 clicks, 78% of tiles carried no price. The batch just loaded is on
+      // screen right now, which is the one moment its price is rendered.
+      if (onBatch) { try { onBatch(); } catch (e) { alog("onBatch failed: " + e); } }
       await new Promise((r) => setTimeout(r, 800 + Math.random() * 700));  // politeness
     }
     return clicks;
@@ -350,17 +388,27 @@
   // sent to fetch by reading shared storage — every tab would read the newest
   // assignment. Ask the background worker instead: it knows the sender's tab id.
   chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "ADC_LISTING_JOB") {
+      alog("got LISTING_JOB active=" + msg.active +
+           " job=" + (msg.job ? msg.job.url.slice(-40) : "null"));
+      if (!msg.active || !msg.job) { alog("no job for this tab - idling"); return; }
+      runListingPage(msg.job).catch((e) => {
+        alog("listing page failed: " + e);
+        chrome.runtime.sendMessage({ type: "ADC_LISTING_PAGE_DONE", products: 0 });
+      });
+      return;
+    }
     if (msg.type !== "ADC_JOB") return;
     if (!msg.active || !msg.job) return;
     const job = { ...msg.job, max_pages: msg.max_pages };
     if (onExpectedPage(job) || /\/product\//.test(location.href)) {
-      console.log("[ADC] sweep page", productId(location.href));
+      alog("sweep page " + productId(location.href));
       runSweepPage(job).catch((e) => {
-        console.log("[ADC] sweep page failed:", e);
+        alog("sweep page failed: " + e);
         chrome.runtime.sendMessage({ type: "ADC_SWEEP_PAGE_DONE", reviews: 0 });
       });
     } else {
-      console.log("[ADC] sweep landed off-product, skipping:", location.pathname);
+      alog("sweep landed off-product, skipping: " + location.pathname);
       chrome.runtime.sendMessage({ type: "ADC_SWEEP_PAGE_DONE", reviews: 0 });
     }
   });
@@ -368,6 +416,7 @@
   chrome.storage.local.get(["adc_crawl", "adc_sweep", "adc_listing"]).then(
     ({ adc_crawl, adc_sweep, adc_listing }) => {
     if (adc_listing && adc_listing.active) {
+      alog("page loaded, listing active - asking for my job");
       // Several listing workers run at once, so a tab cannot read its own target
       // from shared storage — every tab would see the newest assignment. Ask the
       // background worker, which knows the sender's tab id (ADC_LISTING_JOB above).

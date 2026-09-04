@@ -2,11 +2,6 @@
 # URLs like /beer/all-beer 404). Button-paginated: --clicks controls depth.
 https://www.danmurphys.com.au/list/all
 https://www.danmurphys.com.au/list/wine
-https://www.danmurphys.com.au/wine/red-wine
-https://www.danmurphys.com.au/wine/white-wine
-https://www.danmurphys.com.au/wine/sparkling-wine-champagne
-https://www.danmurphys.com.au/wine/rose-wine
-https://www.danmurphys.com.au/wine/fortified-dessert-wine
 https://www.danmurphys.com.au/beer/all
 https://www.danmurphys.com.au/beer/beerstyle-lager
 https://www.danmurphys.com.au/beer/beerstyle-ale
@@ -17,7 +12,6 @@ https://www.danmurphys.com.au/beer/beerstyle-pilsner
 https://www.danmurphys.com.au/beer/beerstyle-dark-beer
 https://www.danmurphys.com.au/beer/beerstyle-ginger-beer
 https://www.danmurphys.com.au/spirits/all
-https://www.danmurphys.com.au/spirits/whisky
 https://www.danmurphys.com.au/spirits/gin
 https://www.danmurphys.com.au/spirits/vodka
 https://www.danmurphys.com.au/spirits/rum
@@ -31,6 +25,14 @@ https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-gin
 https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-rum
 https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-vodka
 https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-whisky
+https://www.danmurphys.com.au/whisky/all
+https://www.danmurphys.com.au/whisky/scotch-whisky
+https://www.danmurphys.com.au/whisky/american-whiskey
+https://www.danmurphys.com.au/whisky/american-whiskey/bourbon
+https://www.danmurphys.com.au/whisky/irish-whiskey
+https://www.danmurphys.com.au/whisky/japanese-whisky
+https://www.danmurphys.com.au/whisky/australian-whisky
+https://www.danmurphys.com.au/whisky/whiskystyle-single-malt
 https://www.danmurphys.com.au/cider/all
 https://www.danmurphys.com.au/cider/variety-apple-cider
 https://www.danmurphys.com.au/cider/variety-pear-cider

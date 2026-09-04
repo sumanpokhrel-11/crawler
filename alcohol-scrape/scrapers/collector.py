@@ -29,6 +29,8 @@ TARGETS = OUT / "review_targets.json"
 STATE = OUT / "review_sweep_state.json"
 LIST_TARGETS = OUT / "listing_targets.json"
 LIST_STATE = OUT / "listing_state.json"
+ENRICH_TARGETS = OUT / "enrich_targets.json"
+ENRICH_STATE = OUT / "enrich_state.json"
 
 _lock = threading.Lock()
 _seen_products: set[str] = set()
@@ -217,6 +219,78 @@ def listing_progress() -> dict:
     return {"total": len(_listing), "done": done,
             "remaining": max(0, len(_listing) - done),
             "products_seen": sum(_listing_state["done"].values())}
+
+
+# ------------------------------------------------- API enrichment queue
+# Hands out stockcodes in batches; the extension calls Dan Murphy's own product
+# API (which returns price, pack size and rating) and posts the results back.
+_enrich: list[str] = []
+_enrich_index: dict[str, str] = {}     # stockcode -> product_key
+_enrich_done: set[str] = set()
+BATCH = 40
+
+
+def load_enrich_queue() -> None:
+    global _enrich, _enrich_index, _enrich_done
+    if ENRICH_TARGETS.exists():
+        d = json.loads(ENRICH_TARGETS.read_text(encoding="utf-8"))
+        _enrich = d.get("stockcodes", [])
+        _enrich_index = d.get("index", {})
+    if ENRICH_STATE.exists():
+        try:
+            _enrich_done = set(json.loads(ENRICH_STATE.read_text(encoding="utf-8")))
+        except json.JSONDecodeError:
+            _enrich_done = set()
+
+
+def next_stockcodes() -> list[str]:
+    out = [c for c in _enrich if c not in _enrich_done][:BATCH]
+    _enrich_done.update(out)
+    ENRICH_STATE.write_text(json.dumps(sorted(_enrich_done)), encoding="utf-8")
+    return out
+
+
+def enrich_progress() -> dict:
+    return {"total": len(_enrich), "done": len(_enrich_done),
+            "remaining": max(0, len(_enrich) - len(_enrich_done))}
+
+
+def normalize_enriched(items: list[dict]) -> list[dict]:
+    """API rows -> offer records keyed to the product we already hold.
+
+    Keying by stockcode (not by re-deriving a product_key from the API's own
+    name) guarantees the price attaches to the existing product rather than
+    creating a near-duplicate.
+    """
+    out = []
+    ts = N.now_iso()
+    for it in items:
+        key = _enrich_index.get(str(it.get("stockcode")))
+        if not key:
+            continue
+        price = N.parse_price(it.get("price"))
+        member = N.parse_price(it.get("member_price"))
+        if price is None and member is None:
+            continue
+        pack = N.parse_pack_size(it.get("unit") or "") or 1
+        out.append({
+            "record_type": "offer",
+            "product_key": key,
+            "retailer": "Dan Murphy's",
+            "url": it.get("url"),
+            "price_aud": price,
+            "was_price_aud": None,
+            "member_price_aud": member,
+            "promo": None,
+            "unit_price_aud": round((price or member) / pack, 2) if pack > 1 else (price or member),
+            "in_stock": it.get("in_stock"),
+            "pack_size": pack,
+            "postcode": None,
+            "aggregate_rating_norm": N.norm_rating(it.get("rating"), 5),
+            "aggregate_review_count": it.get("reviews") or None,
+            "scraped_at": ts,
+        })
+    return out
 
 
 def queue_progress() -> dict:
@@ -442,6 +516,12 @@ def handle_batch(batch: dict) -> dict:
         tmp.write_text(json.dumps(batch, ensure_ascii=False), encoding="utf-8")
         tmp.replace(dest)
 
+        enriched = normalize_enriched(batch.get("enriched") or [])
+        if enriched:
+            append_jsonl(OUT / "extension_products.jsonl", enriched)
+            STATS["offers"] += len(enriched)
+            print(f"  enriched +{len(enriched)} offers | {enrich_progress()}")
+
         url_hint = category_from_url(batch.get("url"))
         prod_recs, rev_recs = [], []
         for item in batch.get("products", []):
@@ -481,7 +561,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(204); self._cors(); self.end_headers()
 
     def do_GET(self):
-        if self.path.startswith("/next_listing"):
+        if self.path.startswith("/next_stockcodes"):
+            with _lock:
+                codes = next_stockcodes()
+                payload = {"stockcodes": codes, "progress": enrich_progress()}
+            body = json.dumps(payload).encode()
+        elif self.path.startswith("/next_listing"):
             with _lock:
                 t = next_listing()
                 payload = {"target": t, "progress": listing_progress()}
@@ -494,7 +579,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.startswith("/progress"):
             with _lock:
                 body = json.dumps({"stats": STATS, "queue": queue_progress(),
-                                   "listing": listing_progress()}).encode()
+                                   "listing": listing_progress(),
+                                   "enrich": enrich_progress()}).encode()
         else:
             body = json.dumps(STATS).encode()
         self.send_response(200)
@@ -503,6 +589,26 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path.startswith("/log"):
+            # Diagnostic channel: content scripts cannot reach the collector
+            # directly (page CSP), so they relay through the background worker.
+            # Having their logs on disk removes the need to read a browser console.
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                entry = json.loads(self.rfile.read(n))
+                line = (f"{datetime.now():%H:%M:%S} [{entry.get('where','?')}] "
+                        f"{entry.get('msg','')}\n")
+                with (ROOT / "logs" / "extension.log").open("a", encoding="utf-8") as f:
+                    f.write(line)
+                body = b'{"ok":true}'
+                self.send_response(200)
+            except Exception as e:                       # noqa: BLE001
+                body = json.dumps({"ok": False, "error": str(e)}).encode()
+                self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self._cors(); self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body)
+            return
         try:
             n = int(self.headers.get("Content-Length", 0))
             batch = json.loads(self.rfile.read(n))
@@ -524,6 +630,7 @@ if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
     load_queue()
     load_listing_queue()
+    load_enrich_queue()
     print(f"Collector listening on http://127.0.0.1:{port}  -> {OUT}")
     if _listing:
         lp = listing_progress()

@@ -107,6 +107,41 @@ def best_match(name_raw: str, slugs: dict, tokens: dict, postings: dict):
     return best_key, round(best_score, 4)
 
 
+def _comparable(offs: list[dict]) -> dict:
+    """Like-for-like price comparison: same pack size, different retailers."""
+    by_pack: dict[int, dict[str, float]] = {}
+    for o in offs:
+        p, price, ret = o.get("pack_size"), o.get("price_aud"), o.get("retailer")
+        if not p or price is None or not ret:
+            continue
+        cheapest = by_pack.setdefault(p, {})
+        if ret not in cheapest or price < cheapest[ret]:
+            cheapest[ret] = price          # a retailer's best price for that pack
+
+    best = None
+    for pack, byret in by_pack.items():
+        if len(byret) < 2:
+            continue
+        lo, hi = min(byret.values()), max(byret.values())
+        if not lo:
+            continue
+        spread = round((hi - lo) / lo * 100, 1)
+        if best is None or spread > best["compare_spread_pct"]:
+            best = {"compare_pack_size": pack,
+                    "compare_prices": byret,
+                    "compare_spread_pct": spread,
+                    "compare_cheapest": min(byret, key=byret.get),
+                    # Dan Murphy's API reports Unit "Each" for a case as well as
+                    # a bottle, so a case can masquerade as pack_size 1. Real
+                    # retail competition does not produce a 2.5x gap on an
+                    # identical product; treat those as an unresolved pack-size
+                    # mismatch rather than a saving.
+                    "compare_suspect": spread > 150}
+    return best or {"compare_pack_size": None, "compare_prices": {},
+                    "compare_spread_pct": None, "compare_cheapest": None,
+                    "compare_suspect": False}
+
+
 def main() -> None:
     records = load_records()
     summaries = [r for r in records if r["record_type"] == "review_summary"]
@@ -239,6 +274,8 @@ def main() -> None:
     for key, p in canonical.items():
         offs = offers_by.get(key, [])
         prices = [o["price_aud"] for o in offs if o.get("price_aud") is not None]
+        units = [o["unit_price_aud"] for o in offs if o.get("unit_price_aud") is not None]
+        packs = {o.get("pack_size") for o in offs if o.get("pack_size")}
         revs = reviews_by.get(key, [])
         scores = [r["rating_norm"] for r in revs if r.get("rating_norm") is not None]
         # Prefer the retailer's published aggregate over an average of our sample.
@@ -261,6 +298,17 @@ def main() -> None:
             "reviews": [{k: v for k, v in r.items() if k != "record_type"} for r in revs],
             "min_price_aud": min(prices) if prices else None,
             "max_price_aud": max(prices) if prices else None,
+            # Retailers sell the same drink as a single, a 6-pack and a case, and
+            # pack size is not part of product identity - so comparing headline
+            # prices reports a 6-pack against a single can as a 520% "saving".
+            # Unit price is the only sound basis for comparison.
+            "pack_sizes": sorted(packs) if packs else [],
+            "pack_size_mismatch": len(packs) > 1,
+            # Compare only offers that agree on pack size AND come from different
+            # retailers. Dan Murphy's API reports Unit "Each" even for a case, so
+            # a case can look like a single bottle - unit price is not reliable
+            # enough on its own to normalise across pack sizes.
+            **_comparable(offs),
             "retailer_count": len({o["retailer"] for o in offs}),
             "review_count": len(revs),
             "avg_rating_norm": round(sum(scores) / len(scores), 4) if scores else None,
@@ -281,6 +329,10 @@ def main() -> None:
             f.write(json.dumps(q, ensure_ascii=False) + "\n")
 
     multi = sum(1 for c in catalogue if c["retailer_count"] > 1)
+    trusted = [c for c in catalogue
+               if c.get("compare_spread_pct") is not None and not c.get("compare_suspect")]
+    print(f"   like-for-like comparisons: {len(trusted)} trusted, "
+          f"{sum(1 for c in catalogue if c.get('compare_suspect'))} flagged as likely pack mismatch")
     biased = sum(1 for c in catalogue if c.get("biased_sample"))
     with_site = sum(1 for c in catalogue if c.get("site_rating_norm") is not None)
     print(f"-> data/out/catalogue.json  ({len(catalogue)} products, "
