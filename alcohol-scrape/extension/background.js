@@ -4,6 +4,7 @@ const queue = [];
 let flushing = false;
 // Worker tabs that finished a product and are waiting for their next target.
 const pendingTabs = new Set();
+const pendingListingTabs = new Set();
 
 async function flush() {
   if (flushing || !queue.length) return;
@@ -86,9 +87,10 @@ async function sweepNext(tabId) {
   }
 }
 
-async function listingNext() {
+async function listingNext(tabId) {
   const { adc_listing } = await chrome.storage.local.get("adc_listing");
   if (!adc_listing || !adc_listing.active) return;
+  const tab = tabId || adc_listing.tab_id;
 
   let data;
   try {
@@ -99,22 +101,31 @@ async function listingNext() {
     return;
   }
   if (!data.target) {
+    const jobs = { ...(adc_listing.jobs || {}) };
+    delete jobs[tab];
+    const remaining = Object.keys(jobs).length;
     await chrome.storage.local.set({
-      adc_listing: { ...adc_listing, active: false, finished: true },
+      adc_listing: { ...adc_listing, jobs, active: remaining > 0, finished: remaining === 0 },
       listing_progress: data.progress,
     });
     return;
   }
+  const jobs = { ...(adc_listing.jobs || {}) };
+  jobs[tab] = { url: data.target.url, clicks: data.target.clicks };
   await chrome.storage.local.set({
-    adc_listing: { ...adc_listing, url: data.target.url, clicks: data.target.clicks },
+    adc_listing: { ...adc_listing, jobs, url: data.target.url, clicks: data.target.clicks },
     listing_progress: data.progress,
     last_activity: Date.now(),
   });
   try {
-    await chrome.tabs.update(adc_listing.tab_id, { url: data.target.url });
+    await chrome.tabs.update(Number(tab), { url: data.target.url });
   } catch (e) {
-    await chrome.storage.local.set({ adc_listing: { ...adc_listing, active: false },
-                                     last_error: "listing tab closed" });
+    const j = { ...(adc_listing.jobs || {}) };
+    delete j[tab];
+    await chrome.storage.local.set({
+      adc_listing: { ...adc_listing, jobs: j, active: Object.keys(j).length > 0 },
+      last_error: "listing tab " + tab + " closed",
+    });
   }
 }
 
@@ -122,8 +133,13 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   const senderTab = sender && sender.tab ? sender.tab.id : null;
   if (msg.type === "ADC_BATCH") { queue.push(msg.payload); flush(); }
   if (msg.type === "ADC_WHOAMI") {
-    // A worker tab asks which product it was sent to fetch.
-    chrome.storage.local.get("adc_sweep").then(({ adc_sweep }) => {
+    // A worker tab asks what it was sent here to do.
+    chrome.storage.local.get(["adc_sweep", "adc_listing"]).then(({ adc_sweep, adc_listing }) => {
+      if (adc_listing && adc_listing.active) {
+        const job = adc_listing.jobs ? adc_listing.jobs[senderTab] : null;
+        chrome.tabs.sendMessage(senderTab, { type: "ADC_LISTING_JOB", job, active: true });
+        return;
+      }
       const job = adc_sweep && adc_sweep.jobs ? adc_sweep.jobs[senderTab] : null;
       chrome.tabs.sendMessage(senderTab, { type: "ADC_JOB", job,
         active: !!(adc_sweep && adc_sweep.active), max_pages: adc_sweep && adc_sweep.max_pages });
@@ -156,13 +172,28 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     })();
   }
   if (msg.type === "ADC_LISTING_START") {
-    chrome.storage.local.set({
-      adc_crawl: { active: false, pages_left: 0 },
-      adc_sweep: { active: false },
-      adc_listing: { active: true, tab_id: msg.tab_id, finished: false },
-    }).then(() => { chrome.storage.local.set({ last_activity: Date.now() }); listingNext(); });
+    (async () => {
+      const want = Math.max(1, Math.min(4, msg.tabs || 1));
+      const tabIds = [msg.tab_id];
+      for (let i = 1; i < want; i++) {
+        try {
+          const w = await chrome.windows.create({ url: "about:blank", focused: false,
+                                                  width: 900, height: 700,
+                                                  left: 60 * i, top: 60 * i });
+          tabIds.push(w.tabs[0].id);
+        } catch (e) { console.log("[ADC] could not open listing worker window", e); }
+      }
+      await chrome.storage.local.set({
+        adc_crawl: { active: false, pages_left: 0 },
+        adc_sweep: { active: false },
+        adc_listing: { active: true, tab_id: msg.tab_id, tab_ids: tabIds, jobs: {}, finished: false },
+        last_activity: Date.now(),
+      });
+      for (const t of tabIds) await listingNext(t);
+    })();
   }
   if (msg.type === "ADC_LISTING_PAGE_DONE") {
+    if (senderTab) pendingListingTabs.add(senderTab);
     chrome.storage.local.set({ last_activity: Date.now() });
     chrome.alarms.create("adc_next_listing", { when: Date.now() + 3000 + Math.random() * 2000 });
   }
@@ -200,7 +231,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
   if (alarm.name === "adc_next_listing") {
     await flush();
-    await listingNext();
+    const tabs = [...pendingListingTabs];
+    pendingListingTabs.clear();
+    if (tabs.length) { for (const t of tabs) await listingNext(t); }
+    else await listingNext();
     return;
   }
   if (alarm.name !== "adc_watchdog") return;

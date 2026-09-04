@@ -1,21 +1,45 @@
-# Listing pages to crawl for products + prices, one URL per line.
-# Blank lines and #-comments ignored. Re-run build_listing_queue.py after editing.
+# Dan Murphy's category pages, taken from the site's own navigation (guessed
+# URLs like /beer/all-beer 404). Button-paginated: --clicks controls depth.
+https://www.danmurphys.com.au/list/all
 https://www.danmurphys.com.au/list/wine
+https://www.danmurphys.com.au/wine/red-wine
+https://www.danmurphys.com.au/wine/white-wine
+https://www.danmurphys.com.au/wine/sparkling-wine-champagne
+https://www.danmurphys.com.au/wine/rose-wine
+https://www.danmurphys.com.au/wine/fortified-dessert-wine
 https://www.danmurphys.com.au/beer/all
+https://www.danmurphys.com.au/beer/beerstyle-lager
+https://www.danmurphys.com.au/beer/beerstyle-ale
+https://www.danmurphys.com.au/beer/beerstyle-pale-ale
+https://www.danmurphys.com.au/beer/beerstyle-ipa
+https://www.danmurphys.com.au/beer/beerstyle-stout
+https://www.danmurphys.com.au/beer/beerstyle-pilsner
+https://www.danmurphys.com.au/beer/beerstyle-dark-beer
+https://www.danmurphys.com.au/beer/beerstyle-ginger-beer
 https://www.danmurphys.com.au/spirits/all
+https://www.danmurphys.com.au/spirits/whisky
+https://www.danmurphys.com.au/spirits/gin
+https://www.danmurphys.com.au/spirits/vodka
+https://www.danmurphys.com.au/spirits/rum
+https://www.danmurphys.com.au/spirits/tequila
+https://www.danmurphys.com.au/spirits/brandy-cognac
+https://www.danmurphys.com.au/spirits/liqueurs
+https://www.danmurphys.com.au/spirits/seltzers
 https://www.danmurphys.com.au/spirits/premix-drinks
-https://www.danmurphys.com.au/list/zero-alcohol-drinks
+https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-bourbon
+https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-gin
+https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-rum
+https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-vodka
+https://www.danmurphys.com.au/spirits/premix-drinks/premix-drinks-whisky
+https://www.danmurphys.com.au/cider/all
+https://www.danmurphys.com.au/cider/variety-apple-cider
+https://www.danmurphys.com.au/cider/variety-pear-cider
 https://www.danmurphys.com.au/list/new
-https://www.danmurphys.com.au/discover/fathers-day
-https://www.danmurphys.com.au/list/member-offers
 https://www.danmurphys.com.au/list/clearance
-https://www.danmurphys.com.au/list/buy-one-get-one-free
-https://www.danmurphys.com.au/list/wine-offers-best-deals
-https://www.danmurphys.com.au/list/spirits-offers-best-deals
-https://www.danmurphys.com.au/list/beer-offers-best-deals
-https://www.danmurphys.com.au/list/cider-offers-best-deals
-https://www.danmurphys.com.au/list/premix-offers-best-deals
+https://www.danmurphys.com.au/list/member-offers
 https://www.danmurphys.com.au/list/top-shelf
+https://www.danmurphys.com.au/list/zero-alcohol-drinks
+https://www.danmurphys.com.au/list/premix
 
 # Liquorland (Coles). Paginates by ?page=N at 60 products/page, so these are
 # expanded into one target per page. Over-estimating pages is harmless: a page

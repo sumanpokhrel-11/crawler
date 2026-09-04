@@ -50,7 +50,8 @@ $("stop").onclick = async () => {
 
 $("listing").onclick = async () => {
   const t = await activeTab();
-  chrome.runtime.sendMessage({ type: "ADC_LISTING_START", tab_id: t.id });
+  chrome.runtime.sendMessage({ type: "ADC_LISTING_START", tab_id: t.id,
+    tabs: Math.max(1, Math.min(4, Number($("ltabs").value) || 1)) });
   setTimeout(refresh, 1500);
 };
 

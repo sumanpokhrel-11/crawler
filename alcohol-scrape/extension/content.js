@@ -262,9 +262,13 @@
       btn.click();
       clicks++;
       // Wait for the new batch to render, then confirm the count actually grew.
+      // Chrome clamps timers in occluded/background windows, so a worker window
+      // can take far longer than a focused one to render the next batch. An 8s
+      // ceiling made throttled tabs give up after a few clicks (/list/wine
+      // returned 264 products across 3 tabs vs 1,464 on one focused tab).
       let grew = false;
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 400));
+      for (let i = 0; i < 60; i++) {          // up to ~30s
+        await new Promise((r) => setTimeout(r, 500));
         if (document.querySelectorAll(countSel).length > before) { grew = true; break; }
       }
       if (!grew) break;                       // exhausted, or the list stopped responding
@@ -363,16 +367,11 @@
 
   chrome.storage.local.get(["adc_crawl", "adc_sweep", "adc_listing"]).then(
     ({ adc_crawl, adc_sweep, adc_listing }) => {
-    if (adc_listing && adc_listing.active && adc_listing.url &&
-        location.href.split("?")[0] === adc_listing.url.split("?")[0]) {
-      runListingPage(adc_listing).catch((e) => {
-        console.log("[ADC] listing page failed:", e);
-        chrome.runtime.sendMessage({ type: "ADC_LISTING_PAGE_DONE", products: 0 });
-      });
-      return;
-    }
     if (adc_listing && adc_listing.active) {
-      chrome.runtime.sendMessage({ type: "ADC_LISTING_PAGE_DONE", products: 0 });
+      // Several listing workers run at once, so a tab cannot read its own target
+      // from shared storage — every tab would see the newest assignment. Ask the
+      // background worker, which knows the sender's tab id (ADC_LISTING_JOB above).
+      chrome.runtime.sendMessage({ type: "ADC_WHOAMI" });
       return;
     }
     if (adc_sweep && adc_sweep.active) {

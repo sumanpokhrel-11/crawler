@@ -134,6 +134,36 @@ def main() -> None:
         if gtin:
             by_gtin[gtin] = key
 
+    # --- 1b. merge across retailers where only the volume differs ------------
+    # Dan Murphy's often omits the bottle size from its listing name (only 636 of
+    # 1,526 carry a volume) while Liquorland almost always includes it, so the
+    # same bottle hashes to two different keys and never matches. Merge entries
+    # whose names agree once volume is set aside — but ONLY when one side's
+    # volume is unknown. If both are known and differ they are genuinely
+    # different products (375mL vs 700mL), and if a group holds more than one
+    # known volume the unknown one is ambiguous, so leave it alone.
+    groups: dict[str, list[str]] = defaultdict(list)
+    for k, p in canonical.items():
+        groups[N.match_slug(p.get("brand"), p["name"], None, p.get("vintage"))].append(k)
+
+    merged = 0
+    for _slug, keys in groups.items():
+        if len(keys) < 2:
+            continue
+        known = {canonical[k].get("volume_ml") for k in keys if canonical[k].get("volume_ml")}
+        if len(known) != 1:
+            continue                       # ambiguous, or all unknown
+        vol = known.pop()
+        primary = next(k for k in keys if canonical[k].get("volume_ml") == vol)
+        for k in keys:
+            if k == primary or canonical[k].get("volume_ml"):
+                continue
+            alias[k] = primary
+            canonical.pop(k, None)
+            merged += 1
+    if merged:
+        print(f"merged {merged} products that differed only by a missing volume")
+
     slugs, tokens, postings = build_index(canonical)
     # Exact-slug lookup handles the easy majority before any fuzzy work.
     exact = {}
