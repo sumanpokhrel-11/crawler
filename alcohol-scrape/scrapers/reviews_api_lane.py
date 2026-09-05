@@ -59,6 +59,7 @@ OUT = ROOT / "data" / "out"
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36")
 PAGE_SIZE = 100          # 200 is accepted but silently returns nothing
+FAILURE_LIMIT = 10       # consecutive product failures before giving up
 
 SITES = {
     "dan_murphys": {
@@ -103,8 +104,13 @@ def get(url: str, referer: str, timeout: int = 45, tries: int = 5):
                 data = gzip.decompress(data)
             return json.loads(data.decode("utf-8", "ignore"))
         except urllib.error.HTTPError as e:
-            if e.code in (429, 503) and attempt < tries - 1:
-                print(f"    throttled ({e.code}), waiting {delay:.0f}s")
+            # 403 is what BWS returns when the request arrives from an IP
+            # Cloudflare does not like, which is exactly what a dropped VPN
+            # looks like. Treat it as transient here and let the caller's
+            # circuit breaker decide whether the drop is permanent.
+            if e.code in (403, 429, 503) and attempt < tries - 1:
+                label = "blocked" if e.code == 403 else "throttled"
+                print(f"    {label} ({e.code}), waiting {delay:.0f}s")
                 time.sleep(delay)
                 delay *= 2
                 continue
@@ -294,6 +300,11 @@ def main() -> None:
                 pass
 
     kept = 0
+    # A lost VPN or a hard block fails every product identically. Without a
+    # stop, the run would chew through thousands of targets in minutes,
+    # collect nothing and still print "done".
+    consecutive_failures = 0
+    aborted = False
     with rev_path.open("a", encoding="utf-8") as rf, \
          sum_path.open("a", encoding="utf-8") as sf:
         for idx, (code, published, known_name) in enumerate(targets, 1):
@@ -329,9 +340,18 @@ def main() -> None:
                     time.sleep(args.delay + random.uniform(0, 0.4))
             except (urllib.error.HTTPError, urllib.error.URLError,
                     TimeoutError, OSError, ValueError) as e:
+                consecutive_failures += 1
                 print(f"  ! {code} failed: {e}")
+                if consecutive_failures >= FAILURE_LIMIT:
+                    print(f"\n  ABORTED after {FAILURE_LIMIT} consecutive "
+                          f"failures — the source is unreachable (VPN down?).\n"
+                          f"  Progress is saved; re-run the same command to "
+                          f"resume from here.")
+                    aborted = True
+                    break
                 continue
 
+            consecutive_failures = 0
             done.add(code)
             if idx % 25 == 0 or got:
                 print(f"  [{idx}/{len(targets)}] {code}: +{got} "
@@ -342,7 +362,11 @@ def main() -> None:
             time.sleep(args.delay + random.uniform(0, 0.4))
 
     state_path.write_text(json.dumps({"done": sorted(done)}))
-    print(f"done: {kept} reviews -> {rev_path.relative_to(ROOT)}")
+    verb = "stopped early" if aborted else "done"
+    print(f"{verb}: {kept} reviews, {len(done)}/{len(targets)} products "
+          f"-> {rev_path.relative_to(ROOT)}")
+    if aborted:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
