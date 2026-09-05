@@ -14,6 +14,7 @@ rather than being guessed at and silently corrupting the comparison data.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections import defaultdict
 from difflib import SequenceMatcher
@@ -170,12 +171,39 @@ def _comparable(offs: list[dict]) -> dict:
             "compare_suspect": False, "compare_basis": None}
 
 
+def dedupe_reviews(reviews: list[dict]) -> list[dict]:
+    """Drop the same review arriving through two lanes.
+
+    Dan Murphy's and BWS reviews were first collected by the browser extension
+    off the rendered page, and are now also pulled from the BazaarVoice endpoint
+    the page calls. review_key hashes the source URL, and the two lanes write
+    different URLs for one product (the extension keeps the slug and the search
+    query string, the API lane writes the bare stockcode path), so identical
+    reviews do not collide on it.
+
+    Author plus review body identifies a review within a source regardless of
+    which lane fetched it. The API copy wins on a tie: its text is not truncated
+    at the page's 250-character "Read more" cut.
+    """
+    best: dict[tuple, dict] = {}
+    for rv in reviews:
+        text = re.sub(r"\s+", " ", (rv.get("text") or "")).strip().lower()
+        key = (rv.get("source"), (rv.get("author") or "").strip().lower(), text[:180])
+        kept = best.get(key)
+        if kept is None or len(rv.get("text") or "") > len(kept.get("text") or ""):
+            best[key] = rv
+    dropped = len(reviews) - len(best)
+    if dropped:
+        print(f"deduped {dropped} reviews seen through more than one lane")
+    return list(best.values())
+
+
 def main() -> None:
     records = load_records()
     summaries = [r for r in records if r["record_type"] == "review_summary"]
     products = [r for r in records if r["record_type"] == "product"]
     offers = [r for r in records if r["record_type"] == "offer"]
-    reviews = [r for r in records if r["record_type"] == "review"]
+    reviews = dedupe_reviews([r for r in records if r["record_type"] == "review"])
     by_url = {(s.get("source_url") or "").split("?")[0]: s for s in summaries}
     print(f"loaded {len(products)} products, {len(offers)} offers, {len(reviews)} reviews")
 

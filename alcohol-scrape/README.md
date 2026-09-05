@@ -31,13 +31,17 @@ An audit of every source in the brief found roughly half unreachable from a serv
 | Source | Lane | Status |
 |---|---|---|
 | Kent Street Cellars | HTTP | Shopify `/products.json` — 7,818 products |
-| Dan Murphy's | extension | Cloudflare-blocked server-side; works in-browser |
+| Dan Murphy's | extension + HTTP | listing crawl in-browser; reviews via the BazaarVoice endpoint |
+| BWS | HTTP | sitemap gives every stockcode; Endeavour API gives the rest |
 | Liquorland | extension | ShieldSquare blocks servers; works in-browser |
-| BWS | **blocked** | Cloudflare hard-block ("you have been blocked"), in a real browser too |
-| Thirsty Camel, Nicks | extension | JS-rendered, no product endpoint |
+| Thirsty Camel, Nicks | HTTP | backend API / sitemap + JSON-LD |
 | Liquor Loot, MyBottleShop | — | connection timeout (likely AU geo-fence) |
 | Untappd, Crafty Pint | extension | Cloudflare |
 | Trustpilot AU, ProductReview | extension | robots.txt disallows crawlers |
+
+BWS was recorded as a hard block for most of this project and is not: the block is
+IP-reputation based, and the same requests succeed from a different egress. It is
+still the most aggressively rate-limited source here — see below.
 
 - **HTTP lane** (`scrapers/http_lane.py`) — plain requests, for sources that answer.
 - **Extension lane** (`extension/`) — Chrome MV3 extension that extracts from pages in
@@ -83,11 +87,34 @@ config/listing_seeds.txt
                             -> resolve.py -> catalogue.json (reviews attached)
 ```
 
+The HTTP lanes bypass the queue entirely and write straight into `data/out/`, which
+`resolve.py` globs:
+
+```
+bws_lane.py         -> bws.jsonl            (sitemap -> stockcodes -> API)
+reviews_api_lane.py -> reviews_api_<source>.jsonl + _summaries.jsonl
+```
+
+`reviews_api_lane.py` reads its targets out of records already collected (any offer
+carrying an `aggregate_review_count`), keeps a resume file per source, and applies
+the agreed sampling depth: 200+ published reviews -> 50 most recent, 21-199 -> 20,
+20 or fewer -> all. `--full` or `--cap N` overrides it once the client decides.
+
+Both Endeavour lanes and the extension can produce the same review. `resolve.py`
+de-duplicates on source plus author plus body, keeping the longer text, because
+`review_key` hashes the source URL and the two lanes write different URLs for one
+product.
+
 | Script | Does |
 |---|---|
 | `collector.py` | Local HTTP server: serves both queues, normalises and writes records |
 | `normalize.py` | Volume, pack size, ABV, vintage, category, price, name, match keys |
 | `http_lane.py` | Shopify scraper (Kent Street Cellars) |
+| `bws_lane.py` | BWS: product sitemap -> Endeavour `Products/` API (no browser) |
+| `reviews_api_lane.py` | Dan Murphy's + BWS reviews via the BazaarVoice endpoint |
+| `nicks_lane.py` | Nicks: sitemap + JSON-LD |
+| `thirstycamel_lane.py` | Thirsty Camel: Cloud Run backend API |
+| `winepilot_lane.py` | Winepilot tasting notes via the WordPress REST API |
 | `build_listing_queue.py` | Listing targets from the seed file |
 | `build_queue.py` | Review targets ranked from the catalogue |
 | `resolve.py` | Entity resolution + nested `catalogue.json` export |
@@ -130,6 +157,65 @@ popup's **Fill prices via API** use to fill prices the DOM crawl missed.
 `Browse` needs the site's internal taxonomy: `department`/`subDepartment` must be
 real values (`spirits`/`gin` works, `beer`/`all` 404s), so it cannot be derived
 from the URL path alone. Capture a real request body from the page to learn them.
+
+**Both Endeavour sites serve their reviews over plain HTTP.**
+
+The review widget on a Dan Murphy's or BWS product page is fed by:
+
+```
+GET {api}/apis/ui/BazaarVoice/RatingsAndReviews
+    ?ProductId=<id>&Sort=SubmissionTime:desc&PageOffset=<n>&PageSize=100
+```
+
+`scrapers/reviews_api_lane.py` drives it. This replaced the browser review sweep,
+which took thirteen hours for one site. Four things it fixes:
+
+- **No truncation.** `LongDesc` is the whole review body. The DOM holds only what
+  the "Read more" toggle has expanded, which cut 206 reviews at exactly 250
+  characters — one grew from 240 to 777 characters when expanded.
+- **No sampling bias.** `Sort=SubmissionTime:desc` is newest-first. The page
+  itself defaults to `Rating:desc`, which is what poisoned the first sweep: 99% of
+  the first 2,000 reviews collected were 5-star, and a product averaging 1.6 stars
+  presented four 5-star reviews at the top.
+- **Ground truth in the same call.** `RatingDistribution` (Dan Murphy's) and
+  `overall` (BWS) return the site's own published star distribution, which is what
+  a sampled set gets checked against.
+- **100 reviews per request** with `PageOffset` paging, verified to the end of a
+  6,936-review product. `PageSize=200` is accepted and silently returns nothing.
+
+The two sites are the same platform at different versions, so they differ:
+
+| | Dan Murphy's | BWS |
+|---|---|---|
+| `ProductId` | `DM_73796` (prefixed) | `122063` (bare) |
+| reviews key | `Reviews` | `reviews` |
+| body field | `LongDesc` | `description` |
+| date format | `29 August 2026` | ISO-8601 |
+| product name | absent, read from our catalogue | `productTitle` |
+
+**BWS needs no browser at all.**
+
+`robots.txt` publishes `https://bws.com.au/sitemap/products-sitemap.xml`, and every
+URL in it carries the stockcode: `/product/<stockcode>/<slug>`. That is the whole
+catalogue enumeration with no category crawl. Feed those codes to
+`api.bws.com.au/apis/ui/Products/<code,code,...>` (30 per call) and it returns name,
+brand, price, was-price, package size, availability, rating and review count, plus
+an `AdditionalDetails` list carrying ABV, country, state, region, vintage, varietal
+and standard drinks — richer product metadata than any other source here.
+
+Two traps in that payload: some `AdditionalDetails` values are lists, not strings
+(`categorynodename`), and `image1` is a bare filename that has to be prefixed with
+`https://egl-assets.scene7.com/is/image/endeavour/` with the extension stripped.
+
+Cloudflare rate-limits BWS hard. A 200-request discovery burst at concurrency 8
+earned an immediate 429 challenge that took a minute to clear, so both BWS lanes
+run serially with a delay and back off exponentially on 429/503.
+
+The category tree is walkable if it is ever needed (`POST /apis/ui/Browse` with
+`{"CategoryId": "<id>", "PageNumber": 1, "PageSize": 100, "Filters": [],
+"SortType": "TopSellers"}`): each response names the node, its `ParentId` and its
+children, roots have `ParentId` 0, and `All Wine` is 1107, `All Spirits` 1109. The
+sitemap makes it unnecessary.
 
 The DOM notes below still apply to the listing crawl:
 
